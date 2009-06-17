@@ -1,7 +1,0 @@
-; $Id$
-name = Featured Comments
-description = "Allows administrators to mark a comment as featured and provide a block displaying it"
-package = Featured Comments
-dependencies[] = comment
-version = "6.x-1.x-dev"
-core = 6.x
