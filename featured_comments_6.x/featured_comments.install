@@ -1,0 +1,20 @@
+<?php
+
+/**
+ * Implementation of hook_install().
+ */
+function featured_comments_install() {
+  drupal_set_message("installed featured_comments");
+  // Create tables.
+  drupal_install_schema('featured_comments');
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function featured_comments_uninstall() {
+  // Remove tables.
+  drupal_uninstall_schema('featured_comments');
+
+  variable_del('featured_comments_block_num_1');
+}

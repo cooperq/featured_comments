@@ -1,0 +1,300 @@
+<?php
+/**
+ *  @featured_comment
+ *  allows editors of a site to select comments to be featued and provides a block to display featured comments
+ */
+
+/**
+ * implimentation of hook_perm
+ */
+
+function featured_comments_perm() {
+  return array("administer comments");
+}
+
+/**
+ * creates blocks to show a list of featured comments and the latest featured comment
+ * Implimentation of hook_block
+ */
+function featured_comments_block($op='list', $delta='0') {
+  switch($op) {
+    case 'list':
+      $block[0]= array( info=>"all featured comments");
+      $block[1]= array( info=>"latest featured comment");
+      return $block;
+      break;
+    case 'view':
+      switch ($delta) {
+        case 0: //this block shows the n latest featured comments set by the user
+          while($comment = db_fetch_object($q)) {
+            $node = node_load($comment->nid);
+            $content .= "<p><h5 class='contentTitle'> <span class='txtRed'> Re: </span>" . l($node->title, "node/". $comment->nid) ."</h5></p>";
+          }
+          $block['subject']=t("Featured comments");
+          $block['content']=$content;
+          return $block;
+          break;
+        case 1: //this block shows the entire text of the latest featured comment
+          $q = db_query('SELECT * FROM {comments} AS c LEFT JOIN {featured_comments} AS fc ON fc.cid = c.cid WHERE fc.featured=1 ORDER BY c.timestamp DESC LIMIT 1');
+          $comment = db_fetch_object($q);
+          $node = node_load($comment->nid);
+          $content .= "<div class='view-content view-content-featured-comment'><h4 class='contentTitle'> <span class='txtRed'> " 
+            . t("Re:") ." </span>" . l($node->title, "node/". $comment->nid) ."</h4><p>";
+          $content .= $comment->comment;
+          $content .= "</p></div>";
+          $block['subject'] = t("latest featured comment");
+          $block['content']  = $content;
+          return $block;
+          break;
+      }
+      break;
+    case 'configure':
+      //TODO: set up the variables for configuration of number of comments to show
+      break;
+    case 'save':
+      //TODO: see above
+      break;
+  }
+}
+
+/**
+ * admin menu for featured comments
+ */
+function featured_comments_admin() {
+  $form = array();
+  $form['featured_comments_maxdisp'] = array (
+    '#type' => 'textfield',
+    '#title' => 'number of links to show in "all featured comments" block',
+    '#default_value' => variable_get('featured_comments_maxdisp', 5),
+    '#size' => 2,
+    '#maxlength' => 2
+  );
+  return system_settings_form($form);
+}
+
+/**
+ * imlimentation of hook_menu
+ */
+function featured_comments_menu() {
+  $items = array();
+  /* page hook for admin settings for featured comments*/
+  $items['admin/settings/featured-comments'] = array(
+    'title' => 'Featured Comments Settings',
+    'description' => 'set comments to be featured and set the number of comments shown',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => 'featured_comments_admin',
+    'access arguments' => ('administer comments'),
+    'type' => MENU_NORMAL_ITEM
+  );
+  /*page hook for featuring a comment*/
+  $items['admin/settings/featured-comments/feature'] = array(
+    'title' => 'featured comment',
+    'page callback' => 'feature_comment',
+    'page arguments' => array(4),
+    'access arguments' => array('administer comments'),
+    'type' => MENU_CALLBACK,
+  );
+
+  /*page hook for unfeaturing a comment*/
+  $items['admin/settings/featured-comments/unfeature'] = array(
+    'title' => 'unfeatured comment',
+    'page callback' => 'unfeature_comment',
+    'page arguments' => array(4),
+    'access arguments' => array('administer comments'),
+    'type' => MENU_CALLBACK,
+  );
+
+
+
+  return $items;
+}
+
+/**
+ * returns a paginated db query result resource containing all comments and their featured status
+ */
+function _featured_comments_get_comments() {
+  return pager_query("SELECT * FROM comments as c LEFT JOIN featured_comments AS fc on c.cid = fc.cid ORDER BY c.cid DESC");
+}
+
+
+
+function featured_comments_get_comment_by_type($node_type) {
+  return db_fetch_object(db_query("SELECT c.cid, n.nid, fc.featured FROM comments as c LEFT JOIN node AS n on c.nid = n.nid LEFT JOIN featured_comments AS fc on c.cid = fc.cid  WHERE n.type = '$node_type' AND fc.featured=1 ORDER BY RAND() DESC LIMIT 1;"));
+}
+/**
+ * comment_featured
+ * Parameters: $cid <comment id>
+ * Returns: bool true if the comment is featured, false otherwise
+ */
+function comment_featured($cid) {
+  $result = (db_result( db_query("SELECT featured FROM {featured_comments} WHERE cid=%d", $cid) ) || 0);
+  return $result;
+}
+
+/**
+ * implimentation of hook_comment 
+ */
+function featured_comments_comment(&$a1, $op) {
+  switch($op) {
+  case 'view':  //here we add the feature comment link
+    $a1->featured = comment_featured($a1->cid);  // set comment featured status
+    $view = _featured_comments_get_display_settings();  // check which comments we are viewing
+      $a1->display = TRUE;
+      if(!($view==comment_featured($a1->cid) || $view == -1)) {
+        $a1->display = FALSE; //we are not displaying this comment
+        return;
+      }
+
+      if(user_access('administer comments')) { //want to make sure the user is an admin
+        if( comment_featured($a1->cid) ) {
+          $a1->comment .= "<div class='feature-link'>This is a featured comment! " 
+            . l(t("Unfeature this comment"), "admin/settings/featured-comments/unfeature/$a1->cid") 
+            . "</div>";
+        } else {
+          $a1->comment .= "<div class='feature-link'>" 
+            . l(t("Feature this comment"), "admin/settings/featured-comments/feature/$a1->cid") 
+            . "</div>";
+        } 
+      }
+      break;
+    case 'insert': //make sure we get a new comment in the featured comments databse when someone posts
+      db_query("INSERT INTO {featured_comments} (cid,featured) VALUES (%d, 0)", $a1['cid']);
+      break;
+  }
+}
+
+/**
+ * feature_comment($cid) 
+ * Set a comment's status to featured
+ */
+
+function feature_comment($cid) {
+  $comment = _comment_load($cid);
+  if( db_result(db_query("SELECT cid FROM {featured_comments} WHERE cid=%d", $cid))) {  //this will either return a cid or null if the comment isn't in the db yet for some reason
+    db_query("UPDATE {featured_comments} SET featured=1 WHERE cid=%d", $cid);
+  } else {
+    db_query("INSERT INTO {featured_comments} (cid,featured) VALUES (%d, 1)", $cid);  // so lets put it in there.
+  }
+  drupal_goto("node/$comment->nid");
+}
+
+/**
+ * unfeature_comment($cid) 
+ * Set a comment's status to not featured
+ */
+
+function unfeature_comment($cid) {
+  $comment = _comment_load($cid);
+  db_query("UPDATE {featured_comments} SET featured=0 WHERE cid=%d", $cid);
+  drupal_goto("node/$comment->nid");
+}
+
+/**
+ *  Implementation of hook_views_tables() 
+ *  This allows us to have views be aware of featured comments
+ */
+function featured_comments_views_tables() {
+  //set our featured comments table
+  $tables['comments'] = array(
+    'name'=>'comments',
+    'join'=>array(
+      'left'=>array(
+        'table'=>'nodes',
+        'field'=>'nid'
+      ),
+      'right'=>array(
+        'field'=>'nid'
+      )
+    )
+  );
+  $tables['featured_comments'] = array(
+  'name'=>'featured_comments',
+  'join'=>array(
+    'left'=>array(
+      'table'=>'comments',
+      'field'=>'cid'
+    ),
+    'right' => array(
+      'field'=>'cid'
+    ),
+  ),
+  'fields'=>array(
+    'featured'=>array(
+      'name'=>'Featured Comments: featured',
+      'help'=>t('This field returns 1 if the field is featured or 0 if it is not, while not particularly usefull to display it can be good for affecting a specific comment based on whether it is featured or not'),
+      'field'=>'featured'
+    ),
+  ),
+  'filters'=>array(
+    'featured'=>array(
+      'name'=>'Featured Comments: featured',
+      'help'=>'Filter by the featured status of comments',
+      'operator' => 'views_handler_operator_eqneq',
+      'values' => array(
+        '#options' => array(
+          1 => t('Featured'),
+        )
+      )
+    )
+  )
+);
+   
+  return $tables;
+}
+
+/**
+ * implementation of hook_form_alter
+ * Modifies the comment control form to allow viewing comments by filtered status
+ */
+
+function featured_comments_form_alter(&$form, &$form_state, $form_id) {
+  if ($form_id == 'comment_controls') {
+    $form['view_featured'] = array(
+      '#type'=> 'select',
+      '#default_value' => _featured_comments_get_display_settings(),
+      '#options' => _featured_comments_get_filters(),
+      '#weight' => 0
+    );
+    $form['mode'] = array();
+    $form['comments_per_page'] = array();
+
+    $form['#submit'][] = 'featured_comments_cc_submit';
+  }
+}
+
+/**
+ *  Submit hook for comment controls to deal with featured comments
+ */
+
+function featured_comments_cc_submit($form, &$form_state) {
+  global $user;
+  $featured = $form_state['values']['view_featured'];
+  $_SESSION['featured'] = $form_state['values']['view_featured'];
+}
+
+/**
+ *  Returns the following integer:
+ *     1: view only featured comments
+ *     0: view only unfeatured comments
+ *    -1: view all comments
+ */
+function _featured_comments_get_display_settings() {
+  
+    if (isset($_SESSION['featured'])) {
+      $value = $_SESSION['featured'];
+    } else {
+      $value = -1;
+    }
+  return $value;
+}
+
+
+function _featured_comments_get_filters() {
+  return array(
+    1 => t('Featured Comments'),
+    /*0 => t('Not featured comments'),*/
+    -1 => t('All Comments')
+  );
+}
+
+?>
