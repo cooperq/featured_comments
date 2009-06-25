@@ -82,7 +82,7 @@ function featured_comments_menu() {
     'title' => 'Featured Comments Settings',
     'description' => 'set comments to be featured and set the number of comments shown',
     'page callback' => 'drupal_get_form',
-    'page arguments' => 'featured_comments_admin',
+    'page arguments' => array('featured_comments_admin'),
     'access arguments' => ('administer comments'),
     'type' => MENU_NORMAL_ITEM
   );
